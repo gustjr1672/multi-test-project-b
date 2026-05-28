@@ -35,7 +35,7 @@ public class UserController : ControllerBase
 
         return Ok(new
         {
-            Version = "Project-B quick (Version-1)",
+            Version = "Project-B quick (Version-2)",
             Message = "성공",
             UserId = id,
             Data = result

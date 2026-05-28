@@ -1,5 +1,5 @@
 @page
-@*@model ZeroDowntimeApi.pages.quickModel*@
+@model ZeroDowntimeApi.pages.quickModel
 @{
 }
 <html lang="ko">
@@ -81,21 +81,33 @@
             font-size: 15px;
             font-weight: bold;
             cursor: pointer;
-            background-color: #007bff;
             color: white;
             border: none;
             border-radius: 4px;
             transition: background 0.2s;
         }
 
-            button:hover {
+        #btnStart {
+            background-color: #007bff;
+        }
+
+            #btnStart:hover {
                 background-color: #0056b3;
             }
 
-            button:disabled {
-                background-color: #6c757d;
-                cursor: not-allowed;
+        /* ⭐️ 중지 버튼 전용 빨간색 스타일 선언 */
+        #btnStop {
+            background-color: #dc3545;
+        }
+
+            #btnStop:hover {
+                background-color: #bd2130;
             }
+
+        button:disabled {
+            background-color: #6c757d !important;
+            cursor: not-allowed;
+        }
 
         .log-header {
             display: flex;
@@ -110,13 +122,12 @@
             padding: 15px;
             border-radius: 6px;
             overflow-y: auto;
-            height: 400px; /* 로그가 더 잘 보이도록 높이를 살짝 늘렸습니다 */
+            height: 400px;
             font-family: 'Consolas', monospace;
             font-size: 13px;
             line-height: 1.5;
         }
 
-        /* 버전 변경을 시각적으로 돋보이게 하는 스타일 */
         .version-text {
             color: #f1c40f;
             font-weight: bold;
@@ -125,8 +136,8 @@
 </head>
 <body>
     <a href="/" class="nav-link">⬅️ 메인으로 돌아가기</a>
-    <h2>⚡ 연속 API 무중단 배포 검증 테스트 (버전 추적)</h2>
-    <p>요청 횟수만큼 API를 호출하며, 배포 순간 응답 버전이 끊김 없이 전환되는지 감시합니다.</p>
+    <h2>⚡ 연속 API 무중단 배포 검증 테스트 (제어 센터)</h2>
+    <p>요청 횟수를 지정하여 호출을 제어하고, 배포 순간 버전이 교체되는 과정을 추적합니다.</p>
 
     <div class="control-panel">
         <div>
@@ -140,6 +151,7 @@
         </div>
 
         <button id="btnStart" onclick="runStressTest()" style="margin-left: 10px;">🚀 테스트 시작</button>
+        <button id="btnStop" onclick="stopStressTest()" disabled style="margin-left: 5px;">⏱️ 테스트 중지</button>
 
         <div class="status-board">
             <div class="status-card progress-info">
@@ -164,8 +176,19 @@
     <pre id="logArea">대기 중... 테스트 시작 버튼을 누르면 실시간 로그가 출력됩니다.</pre>
 
     <script>
+        // ⭐️ 글로벌 제어용 중지 플래그 선언
+        let shouldStop = false;
+
         function clearLog() {
             document.getElementById('logArea').innerHTML = '대기 중...';
+        }
+
+        // ⭐️ 중지 버튼 클릭 시 호출되는 함수
+        function stopStressTest() {
+            shouldStop = true;
+            const btnStop = document.getElementById('btnStop');
+            btnStop.disabled = true;
+            btnStop.innerText = "중지 요청됨...";
         }
 
         async function runStressTest() {
@@ -173,19 +196,24 @@
             const totalRequests = parseInt(document.getElementById('requestCount').value, 10) || 100;
 
             const btnStart = document.getElementById('btnStart');
+            const btnStop = document.getElementById('btnStop');
             const logArea = document.getElementById('logArea');
             const progressArea = document.getElementById('progressArea');
             const successArea = document.getElementById('successCount');
             const failureArea = document.getElementById('failureCount');
 
-            // UI 초기화
+            // ⭐️ 시작할 때 중지 플래그 초기화 및 버튼 토글
+            shouldStop = false;
             btnStart.disabled = true;
             btnStart.innerText = "테스트 진행 중...";
+            btnStop.disabled = false;
+            btnStop.innerText = "⏱️ 테스트 중지";
+
             logArea.innerHTML = '';
 
             let successCount = 0;
             let failureCount = 0;
-            let currentVersion = null; // 버전 변경 감지용 변수
+            let currentVersion = null;
 
             progressArea.innerText = `0 / ${totalRequests}`;
             successArea.innerText = "0";
@@ -194,20 +222,23 @@
             logArea.innerHTML += `🚀 [시작] 총 ${totalRequests}회 연속 테스트를 가동합니다.\n\n`;
 
             for (let i = 1; i <= totalRequests; i++) {
+                // ⭐️ 매 루프의 시작점마다 중지 요청이 들어왔는지 확인
+                if (shouldStop) {
+                    logArea.innerHTML += `\n🛑 [중지] 사용자에 의해 테스트가 강제 중지되었습니다.\n`;
+                    break;
+                }
+
                 const timestamp = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
 
                 try {
                     const response = await fetch(`/api/User/quick/${id}`);
 
                     if (response.ok) {
-                        // ⭐️ JSON 데이터를 파싱하여 version 추출
                         const data = await response.json();
-                        // C#에서 필드명을 어떻게 주느냐에 따라 version 또는 Version으로 올 수 있으므로 방어적 코딩
                         const apiVersion = data.version || data.Version || "버전 정보 없음";
 
                         successCount++;
 
-                        // 버전이 이전 요청과 달라졌는지 체크 (스위칭 감지)
                         let versionLog = `<span class="version-text">[Ver: ${apiVersion}]</span>`;
                         if (currentVersion !== null && currentVersion !== apiVersion) {
                             versionLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentVersion} ➔ ${apiVersion}]</span>`;
@@ -224,21 +255,24 @@
                     logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">💥 에러 발생: ${error.message}</span>\n`;
                 }
 
-                // 대시보드 실시간 업데이트
                 progressArea.innerText = `${i} / ${totalRequests}`;
                 successArea.innerText = successCount;
                 failureArea.innerText = failureCount;
 
-                // 스크롤을 맨 아래로 고정
                 logArea.scrollTop = logArea.scrollHeight;
 
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
 
-            logArea.innerHTML += `\n🏁 [종료] 테스트 완료! 최종 성공: ${successCount}, 최종 실패: ${failureCount}\n`;
+            // 모든 테스트가 끝나거나 중간에 break 되었을 때 UI 복구
+            if (!shouldStop) {
+                logArea.innerHTML += `\n🏁 [종료] 모든 지정 횟수 호출이 완료되었습니다.\n`;
+            }
 
             btnStart.innerText = "🚀 테스트 시작";
             btnStart.disabled = false;
+            btnStop.disabled = true; // 대기 상태일 때는 중지 버튼 비활성화
+            btnStop.innerText = "⏱️ 테스트 중지";
         }
     </script>
 </body>
