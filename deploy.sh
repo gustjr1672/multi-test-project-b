@@ -65,7 +65,7 @@ cat master-nginx-b.tmp > $MASTER_CONF
 rm master-nginx-b.tmp
 
 # 수정한 설정 파일 내용을 Nginx 컨테이너 안으로 직접 쏴주기
-cat $MASTER_CONF | docker exec -i master-nginx sh -c 'cat > /etc/nginx/nginx.conf'
+#cat $MASTER_CONF | docker exec -i master-nginx sh -c 'cat > /etc/nginx/nginx.conf'
 
 # 문법 검사 및 리로드
 docker exec master-nginx nginx -t
