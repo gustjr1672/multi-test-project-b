@@ -1,0 +1,245 @@
+@page
+@*@model ZeroDowntimeApi.pages.quickModel*@
+@{
+}
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>연속 API 스트레스 테스트</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 750px;
+            margin: 40px auto;
+            padding: 0 20px;
+            color: #333;
+        }
+
+        .nav-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #007bff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .control-panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .status-board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        .status-card {
+            background: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            border: 1px solid #ced4da;
+        }
+
+            .status-card.success {
+                border-left: 5px solid #28a745;
+            }
+
+            .status-card.failure {
+                border-left: 5px solid #dc3545;
+            }
+
+            .status-card.progress-info {
+                border-left: 5px solid #007bff;
+            }
+
+        .count-num {
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        input[type="number"] {
+            padding: 8px;
+            width: 80px;
+            border-radius: 4px;
+            border: 1px solid #ced4da;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+            button:hover {
+                background-color: #0056b3;
+            }
+
+            button:disabled {
+                background-color: #6c757d;
+                cursor: not-allowed;
+            }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+        }
+
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-y: auto;
+            height: 400px; /* 로그가 더 잘 보이도록 높이를 살짝 늘렸습니다 */
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        /* 버전 변경을 시각적으로 돋보이게 하는 스타일 */
+        .version-text {
+            color: #f1c40f;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="nav-link">⬅️ 메인으로 돌아가기</a>
+    <h2>⚡ 연속 API 무중단 배포 검증 테스트 (버전 추적)</h2>
+    <p>요청 횟수만큼 API를 호출하며, 배포 순간 응답 버전이 끊김 없이 전환되는지 감시합니다.</p>
+
+    <div class="control-panel">
+        <div>
+            <label style="font-weight: bold;">User ID: </label>
+            <input type="number" id="userId" value="1">
+        </div>
+
+        <div>
+            <label style="font-weight: bold; margin-left: 10px;">반복 횟수: </label>
+            <input type="number" id="requestCount" value="100" min="1" max="10000">
+        </div>
+
+        <button id="btnStart" onclick="runStressTest()" style="margin-left: 10px;">🚀 테스트 시작</button>
+
+        <div class="status-board">
+            <div class="status-card progress-info">
+                <div>진행률</div>
+                <div class="count-num" id="progressArea">0 / 0</div>
+            </div>
+            <div class="status-card success">
+                <div style="color: #28a745;">성공 (200)</div>
+                <div class="count-num" id="successCount" style="color: #28a745;">0</div>
+            </div>
+            <div class="status-card failure">
+                <div style="color: #dc3545;">실패 / 에러</div>
+                <div class="count-num" id="failureCount" style="color: #dc3545;">0</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="log-header">
+        <h3 style="margin: 0;">실시간 호출 로그 (버전 추적)</h3>
+        <button onclick="clearLog()" style="padding: 6px 12px; font-size: 13px; background-color: #6c757d;">🗑️ 로그 지우기</button>
+    </div>
+    <pre id="logArea">대기 중... 테스트 시작 버튼을 누르면 실시간 로그가 출력됩니다.</pre>
+
+    <script>
+        function clearLog() {
+            document.getElementById('logArea').innerHTML = '대기 중...';
+        }
+
+        async function runStressTest() {
+            const id = document.getElementById('userId').value;
+            const totalRequests = parseInt(document.getElementById('requestCount').value, 10) || 100;
+
+            const btnStart = document.getElementById('btnStart');
+            const logArea = document.getElementById('logArea');
+            const progressArea = document.getElementById('progressArea');
+            const successArea = document.getElementById('successCount');
+            const failureArea = document.getElementById('failureCount');
+
+            // UI 초기화
+            btnStart.disabled = true;
+            btnStart.innerText = "테스트 진행 중...";
+            logArea.innerHTML = '';
+
+            let successCount = 0;
+            let failureCount = 0;
+            let currentVersion = null; // 버전 변경 감지용 변수
+
+            progressArea.innerText = `0 / ${totalRequests}`;
+            successArea.innerText = "0";
+            failureArea.innerText = "0";
+
+            logArea.innerHTML += `🚀 [시작] 총 ${totalRequests}회 연속 테스트를 가동합니다.\n\n`;
+
+            for (let i = 1; i <= totalRequests; i++) {
+                const timestamp = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+
+                try {
+                    const response = await fetch(`/api/User/quick/${id}`);
+
+                    if (response.ok) {
+                        // ⭐️ JSON 데이터를 파싱하여 version 추출
+                        const data = await response.json();
+                        // C#에서 필드명을 어떻게 주느냐에 따라 version 또는 Version으로 올 수 있으므로 방어적 코딩
+                        const apiVersion = data.version || data.Version || "버전 정보 없음";
+
+                        successCount++;
+
+                        // 버전이 이전 요청과 달라졌는지 체크 (스위칭 감지)
+                        let versionLog = `<span class="version-text">[Ver: ${apiVersion}]</span>`;
+                        if (currentVersion !== null && currentVersion !== apiVersion) {
+                            versionLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentVersion} ➔ ${apiVersion}]</span>`;
+                        }
+                        currentVersion = apiVersion;
+
+                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] ✅ 성공 ${versionLog}\n`;
+                    } else {
+                        failureCount++;
+                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">❌ 실패 (HTTP ${response.status})</span>\n`;
+                    }
+                } catch (error) {
+                    failureCount++;
+                    logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">💥 에러 발생: ${error.message}</span>\n`;
+                }
+
+                // 대시보드 실시간 업데이트
+                progressArea.innerText = `${i} / ${totalRequests}`;
+                successArea.innerText = successCount;
+                failureArea.innerText = failureCount;
+
+                // 스크롤을 맨 아래로 고정
+                logArea.scrollTop = logArea.scrollHeight;
+
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
+            logArea.innerHTML += `\n🏁 [종료] 테스트 완료! 최종 성공: ${successCount}, 최종 실패: ${failureCount}\n`;
+
+            btnStart.innerText = "🚀 테스트 시작";
+            btnStart.disabled = false;
+        }
+    </script>
+</body>
+</html>
