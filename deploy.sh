@@ -8,16 +8,14 @@ IS_GREEN=$(docker ps -q -f name=api-green-b)
 if [ -n "$IS_GREEN" ]; then
     CURRENT_TARGET="api-green-b"
     NEW_TARGET="api-blue-b"
-    OLD_TARGET="api-green-b"
     NEW_PORT="9080"
 else
     CURRENT_TARGET="api-blue-b"
     NEW_TARGET="api-green-b"
-    OLD_TARGET="api-blue-b"
     NEW_PORT="9081"
 fi
 
-echo "CURRENT_TARGET=[$CURRENT_TARGET]"
+echo "현재 버전=[$CURRENT_TARGET]"
 echo "🚀 배포 시작: Project B 새로운 버전($NEW_TARGET) 준비"
 
 export IMAGE_TAG="v$(date +%s)"
@@ -77,8 +75,8 @@ sleep 2
 # ==================================================
 # 5. 구버전 종료
 # ==================================================
-echo "🛑 기존 버전($OLD_TARGET) 종료를 요청합니다."
-docker compose stop $OLD_TARGET &
+echo "🛑 기존 버전($CURRENT_TARGET) 종료를 요청합니다."
+docker compose stop $CURRENT_TARGET &
 STOP_PID=$!
 ELAPSED=0
 
@@ -88,7 +86,7 @@ while kill -0 $STOP_PID 2>/dev/null; do
     ((ELAPSED++))
 done
 
-echo -e "\n✅ $OLD_TARGET 종료 완료! (총 ${ELAPSED}초 소요)"
+echo -e "\n✅ $CURRENT_TARGET 종료 완료! (총 ${ELAPSED}초 소요)"
 
 echo "IMAGE_TAG=${IMAGE_TAG}" > .env
 echo "LAST_TARGET=${NEW_TARGET}" >> .env
