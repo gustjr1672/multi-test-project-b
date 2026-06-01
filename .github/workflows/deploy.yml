@@ -22,7 +22,7 @@ jobs:
           bash deploy.sh
 
           jobs:
-  deploy:
+  deploy2:
     # ⭐️ 핵심: B 프로젝트 전용 배달부를 호출합니다!
     runs-on: [self-hosted, project-b, dev2]
 
