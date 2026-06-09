@@ -1,4 +1,4 @@
-﻿using Dapper;
+﻿using System.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 
@@ -25,9 +25,16 @@ public class UserRepository : IUserRepository
         // 쿼리 작성 (문자열 결합이 아닌 @Id 파라미터 사용)
         string sql = "SELECT name FROM [users] WHERE id = @Id";
 
-        // Dapper가 내부적으로 SqlParameter를 생성하여 안전하게 바인딩해 줍니다.
-        var name = await connection.QueryFirstOrDefaultAsync<string>(sql, new { Id = id });
+        using var command = new SqlCommand(sql, connection);
 
-        return name;
+        // SqlParameter로 직접 바인딩하여 안전하게 처리합니다.
+        command.Parameters.Add(new SqlParameter("@Id", SqlDbType.Int) { Value = id });
+
+        await connection.OpenAsync();
+
+        // 단일 컬럼/단일 값 조회이므로 ExecuteScalar 사용
+        var result = await command.ExecuteScalarAsync();
+
+        return result as string;
     }
 }
