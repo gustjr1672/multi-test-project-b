@@ -3,9 +3,9 @@
 # 개선점:
 #  - cancel-in-progress: false → 진행 중 무중단 배포를 도중에 끊지 않고 큐잉
 #    (배포 중 SIGKILL 로 인한 서버 간 버전 불일치/반쪽 전환 방지)
-#  - deploy / deploy2 중복 잡을 matrix 로 통합 (라벨만 다르고 내용 동일했음)
+#  -  matrix 로 통합 (라벨만 다르고 내용 동일했음)
 #  - chmod +x 제거 (bash 로 실행하므로 실행 비트 불필요)
-#  - 개선된 배포 스크립트(deploy2.sh) 호출
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -40,4 +40,4 @@ jobs:
           # 운영 서버별 경로/컨테이너명이 다르면 아래 값을 secrets/vars 로 주입 가능.
           # MASTER_CONF: ${{ vars.MASTER_CONF }}
           # NGINX_CONTAINER: ${{ vars.NGINX_CONTAINER }}
-        run: bash deploy2.sh
+        run: bash deploy.sh
