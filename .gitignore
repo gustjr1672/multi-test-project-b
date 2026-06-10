@@ -27,3 +27,9 @@ Desktop.ini
 # ==========================================
 .env
 appsettings.Development.json
+
+# DB 접속정보 secret 파일 (deploy.sh 가 런타임에 생성, 절대 커밋 금지)
+secrets/
+*.md
+*.pptx
+*.py

@@ -1,8 +1,32 @@
 #!/bin/bash
+# ==================================================
+# Project B 무중단 배포 (개선판)
+# 기존 deploy.sh 대비 변경점:
+#  - set -euo pipefail 로 중간 단계 실패 시 즉시 중단 (구버전 무단 종료 방지)
+#  - master-nginx.conf 경로를 환경변수(MASTER_CONF)로 분리 (하드코딩 제거)
+#  - sed 치환이 실제로 적용됐는지 검증
+#  - nginx -t / reload 성공을 확인한 뒤에만 구버전 종료
+#  - 배포 후 오래된 이미지 정리(디스크 누적 방지)
+#  - 불필요한 sleep / 백그라운드 폴링 / 죽은 코드 제거
+# ==================================================
+set -euo pipefail
 
-# ==================================================
+# --------------------------------------------------
+# 0. 설정 (운영 서버별로 다를 수 있는 값은 환경변수로)
+# --------------------------------------------------
+MASTER_CONF="${MASTER_CONF:-/home/jhs/master-nginx/master-nginx.conf}"
+NGINX_CONTAINER="${NGINX_CONTAINER:-master-nginx}"
+HEALTH_RETRIES="${HEALTH_RETRIES:-20}"   # 콜드스타트/DB 워밍업 여유로 기존(10회)보다 늘림
+HEALTH_INTERVAL="${HEALTH_INTERVAL:-2}"
+
+if [ ! -f "$MASTER_CONF" ]; then
+    echo "🚨 master-nginx 설정 파일을 찾을 수 없습니다: $MASTER_CONF"
+    exit 1
+fi
+
+# --------------------------------------------------
 # 1. 현재 타겟 확인 (Project B 기준)
-# ==================================================
+# --------------------------------------------------
 IS_GREEN=$(docker ps -q -f name=api-green-b)
 
 if [ -n "$IS_GREEN" ]; then
@@ -19,75 +43,87 @@ echo "현재 버전=[$CURRENT_TARGET]"
 echo "🚀 배포 시작: Project B 새로운 버전($NEW_TARGET) 준비"
 
 export IMAGE_TAG="v$(date +%s)"
+# 짧은 git SHA 를 컨테이너 env(GIT_SHA)로 주입 → 앱이 /health·API 응답에 실어 화면에서 추적
+export GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
-# ==================================================
+# --------------------------------------------------
 # 2. 새로운 타겟 빌드 및 실행
-# ==================================================
-docker compose up -d --build $NEW_TARGET
+#    (set -e 로 빌드 실패 시 여기서 즉시 중단)
+# --------------------------------------------------
+docker compose up -d --build "$NEW_TARGET"
 
-# ==================================================
+# --------------------------------------------------
 # 3. 헬스 체크 (호스트에서 직접 찌르기)
-# ==================================================
-echo "헬스 체크 진행 중 (가상머신 포트 $NEW_PORT 확인)"
-for i in {1..10}
+#    주의: /health 는 현재 DB 연결을 검증하지 않으므로,
+#    운영 안전성을 위해 Program.cs 에 DB readiness 체크 추가 권장.
+# --------------------------------------------------
+echo "헬스 체크 진행 중 (포트 $NEW_PORT 확인)"
+STATUS_CODE=""
+for i in $(seq 1 "$HEALTH_RETRIES")
 do
-    STATUS_CODE=$(curl -o /dev/null -s -w "%{http_code}\n" http://127.0.0.1:$NEW_PORT/health)
-    
+    STATUS_CODE=$(curl -o /dev/null -s -w "%{http_code}" "http://127.0.0.1:$NEW_PORT/health" || true)
+
     if [ "$STATUS_CODE" == "200" ]; then
         echo "✅ 헬스 체크 통과!"
         break
     fi
-    echo "대기 중... ($i/10)"
-    sleep 2
+    echo "대기 중... ($i/$HEALTH_RETRIES) 응답코드=$STATUS_CODE"
+    sleep "$HEALTH_INTERVAL"
 done
 
-sleep 3
-
 if [ "$STATUS_CODE" != "200" ]; then
-    echo "🚨 헬스 체크 실패! 새 컨테이너를 내립니다."
-    docker compose stop $NEW_TARGET
+    echo "🚨 헬스 체크 실패! 새 컨테이너를 내립니다. (구버전은 그대로 유지)"
+    docker compose stop "$NEW_TARGET"
     exit 1
 fi
 
-# ==================================================
-# 4. Master Nginx 스위칭 (동기화 지연 및 Inode 보존 완벽 처리)
-# ==================================================
+# --------------------------------------------------
+# 4. Master Nginx 스위칭
+#    - sed 로 # project-b 마커가 붙은 upstream 포트만 교체
+#    - cat tmp > 원본 방식으로 inode 보존 (bind-mount 연결 유지 목적)
+# --------------------------------------------------
 echo "🔄 트래픽을 $NEW_TARGET($NEW_PORT) 포트로 전환합니다."
 
-# Master Nginx 설정 파일 경로
-MASTER_CONF="/home/jhs/master-nginx/master-nginx.conf"
+TMP_CONF="$(mktemp)"
+sed "s/server 127.0.0.1:[0-9]*; # project-b/server 127.0.0.1:$NEW_PORT; # project-b/g" \
+    "$MASTER_CONF" > "$TMP_CONF"
 
-# ⭐️ Project B 전용 꼬리표(# project-b)를 타겟팅하여 포트 번호 교체
-sed "s/server 127.0.0.1:[0-9]*; # project-b/server 127.0.0.1:$NEW_PORT; # project-b/g" $MASTER_CONF > master-nginx-b.tmp
-cat master-nginx-b.tmp > $MASTER_CONF
-rm master-nginx-b.tmp
+# ⭐ 치환이 실제로 적용됐는지 검증 (마커 형식이 틀어지면 조용히 실패하는 사고 방지)
+if ! grep -q "server 127.0.0.1:$NEW_PORT; # project-b" "$TMP_CONF"; then
+    echo "🚨 nginx 설정에서 '# project-b' upstream 라인을 찾지 못했습니다. 전환 중단."
+    rm -f "$TMP_CONF"
+    docker compose stop "$NEW_TARGET"
+    exit 1
+fi
 
-# 수정한 설정 파일 내용을 Nginx 컨테이너 안으로 직접 쏴주기
-#cat $MASTER_CONF | docker exec -i master-nginx sh -c 'cat > /etc/nginx/nginx.conf'
+# inode 보존하며 원본 갱신
+cat "$TMP_CONF" > "$MASTER_CONF"
+rm -f "$TMP_CONF"
 
-# 문법 검사 및 리로드
-docker exec master-nginx nginx -t
-docker exec master-nginx nginx -s reload
+# ⭐ 문법 검사 → 통과해야만 reload (실패 시 구버전 그대로, 다운타임 없음)
+if ! docker exec "$NGINX_CONTAINER" nginx -t; then
+    echo "🚨 nginx 설정 문법 오류! reload/구버전 종료를 중단합니다."
+    docker compose stop "$NEW_TARGET"
+    exit 1
+fi
+
+docker exec "$NGINX_CONTAINER" nginx -s reload
 
 echo "Nginx 교대 대기 중... (2초)"
 sleep 2
 
-# ==================================================
-# 5. 구버전 종료
-# ==================================================
-echo "🛑 기존 버전($CURRENT_TARGET) 종료를 요청합니다."
-docker compose stop $CURRENT_TARGET &
-STOP_PID=$!
-ELAPSED=0
+# --------------------------------------------------
+# 5. 구버전 종료 (전환이 모두 성공한 뒤에만 도달)
+#    docker compose stop 은 완료까지 블로킹되므로 그대로 호출.
+#    in-flight 요청은 stop_grace_period(60s) 동안 드레인됨.
+# --------------------------------------------------
+echo "🛑 기존 버전($CURRENT_TARGET) 종료 요청 (요청 드레인 대기)..."
+docker compose stop "$CURRENT_TARGET"
+echo "✅ $CURRENT_TARGET 종료 완료!"
 
-while kill -0 $STOP_PID 2>/dev/null; do
-    echo -ne "\r⏳ 처리 중인 남은 요청 대기 중... ${ELAPSED}초 경과\t"
-    sleep 1
-    ((ELAPSED++))
-done
+# --------------------------------------------------
+# 6. 정리: 오래된 dangling 이미지 제거 (디스크 누적 방지)
+# --------------------------------------------------
+docker image prune -f >/dev/null 2>&1 || true
 
-echo -e "\n✅ $CURRENT_TARGET 종료 완료! (총 ${ELAPSED}초 소요)"
-
-echo "IMAGE_TAG=${IMAGE_TAG}" > .env
-echo "LAST_TARGET=${NEW_TARGET}" >> .env
-echo "🎉 Project B 무중단 배포 완료!"
+echo "🎉 Project B 무중단 배포 완료! (live=$NEW_TARGET:$NEW_PORT, image=$IMAGE_TAG)"

@@ -132,6 +132,40 @@
             color: #f1c40f;
             font-weight: bold;
         }
+
+        /* 지연시간 패널 */
+        .latency-panel {
+            margin-top: 25px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .latency-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+            text-align: center;
+            color: #666;
+            font-size: 13px;
+        }
+
+        .lat-num {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+            margin-top: 4px;
+        }
+
+        #latChart {
+            width: 100%;
+            display: block;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -169,6 +203,17 @@
         </div>
     </div>
 
+    <!-- ⭐ 지연시간(latency) 통계 + 스파크라인: 전환 순간의 순간 지연 스파이크를 정량 확인 -->
+    <div class="latency-panel">
+        <div class="latency-stats">
+            <div class="latency-stat"><div>최소</div><div class="lat-num" id="latMin">- ms</div></div>
+            <div class="latency-stat"><div>평균</div><div class="lat-num" id="latAvg">- ms</div></div>
+            <div class="latency-stat"><div>최대</div><div class="lat-num" id="latMax">- ms</div></div>
+            <div class="latency-stat"><div>최근</div><div class="lat-num" id="latLast">- ms</div></div>
+        </div>
+        <canvas id="latChart" height="80"></canvas>
+    </div>
+
     <div class="log-header">
         <h3 style="margin: 0;">실시간 호출 로그 (버전 추적)</h3>
         <button onclick="clearLog()" style="padding: 6px 12px; font-size: 13px; background-color: #6c757d;">🗑️ 로그 지우기</button>
@@ -178,6 +223,83 @@
     <script>
         // ⭐️ 글로벌 제어용 중지 플래그 선언
         let shouldStop = false;
+
+        // ⭐ 지연시간 추적용 상태
+        const latencies = [];          // 전체 응답시간(ms) 누적 (min/avg/max 계산)
+        let latSum = 0, latMin = Infinity, latMax = 0;
+        const latWindow = [];          // 스파크라인에 그릴 최근 N개
+        const LAT_WINDOW_SIZE = 120;
+        const switchMarks = [];        // 스위칭이 발생한 지점(스파크라인에 세로선 표시)
+
+        function resetLatency() {
+            latencies.length = 0; latWindow.length = 0; switchMarks.length = 0;
+            latSum = 0; latMin = Infinity; latMax = 0;
+            document.getElementById('latMin').innerText = '- ms';
+            document.getElementById('latAvg').innerText = '- ms';
+            document.getElementById('latMax').innerText = '- ms';
+            document.getElementById('latLast').innerText = '- ms';
+            drawLatChart();
+        }
+
+        function recordLatency(ms, switched) {
+            latencies.push(ms);
+            latSum += ms;
+            if (ms < latMin) latMin = ms;
+            if (ms > latMax) latMax = ms;
+
+            latWindow.push(ms);
+            if (latWindow.length > LAT_WINDOW_SIZE) {
+                latWindow.shift();
+                switchMarks.forEach((m, i) => switchMarks[i] = m - 1); // 윈도우 이동 보정
+            }
+            if (switched) switchMarks.push(latWindow.length - 1);
+
+            const avg = latSum / latencies.length;
+            document.getElementById('latMin').innerText = Math.round(latMin) + ' ms';
+            document.getElementById('latAvg').innerText = Math.round(avg) + ' ms';
+            document.getElementById('latMax').innerText = Math.round(latMax) + ' ms';
+            document.getElementById('latLast').innerText = Math.round(ms) + ' ms';
+            drawLatChart();
+        }
+
+        function drawLatChart() {
+            const canvas = document.getElementById('latChart');
+            const ctx = canvas.getContext('2d');
+            // 캔버스 실제 픽셀 크기를 표시 너비에 맞춤(선명도)
+            const w = canvas.clientWidth || 700;
+            const h = canvas.height;
+            if (canvas.width !== w) canvas.width = w;
+            ctx.clearRect(0, 0, w, h);
+
+            if (latWindow.length === 0) return;
+
+            const max = Math.max(...latWindow, 1);
+            const stepX = w / Math.max(latWindow.length - 1, 1);
+            const pad = 6;
+
+            // 스위칭 발생 지점 세로선(초록)
+            ctx.strokeStyle = '#28a745';
+            ctx.lineWidth = 1;
+            switchMarks.forEach(idx => {
+                if (idx < 0 || idx >= latWindow.length) return;
+                const x = idx * stepX;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+                ctx.stroke();
+            });
+
+            // 지연시간 선그래프
+            ctx.strokeStyle = '#007bff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            latWindow.forEach((v, i) => {
+                const x = i * stepX;
+                const y = h - pad - (v / max) * (h - pad * 2);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+        }
 
         function clearLog() {
             document.getElementById('logArea').innerHTML = '대기 중...';
@@ -213,8 +335,9 @@
 
             let successCount = 0;
             let failureCount = 0;
-            let currentVersion = null;
+            let currentDeployId = null;   // color@imageTag — 이 값이 바뀌면 실제 배포 전환
 
+            resetLatency();
             progressArea.innerText = `0 / ${totalRequests}`;
             successArea.innerText = "0";
             failureArea.innerText = "0";
@@ -230,29 +353,39 @@
 
                 const timestamp = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
 
+                const t0 = performance.now();
                 try {
                     const response = await fetch(`/api/User/quick/${id}`);
+                    const latency = performance.now() - t0;
 
                     if (response.ok) {
                         const data = await response.json();
-                        const apiVersion = data.version || data.Version || "버전 정보 없음";
+                        // 배포 식별자(color@imageTag). 구버전 응답 호환 위해 version 으로 폴백.
+                        const deployId = data.deployId || data.DeployId
+                            || data.version || data.Version || "정보 없음";
+                        const color = data.color || data.Color || "";
 
                         successCount++;
 
-                        let versionLog = `<span class="version-text">[Ver: ${apiVersion}]</span>`;
-                        if (currentVersion !== null && currentVersion !== apiVersion) {
-                            versionLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentVersion} ➔ ${apiVersion}]</span>`;
+                        const switched = currentDeployId !== null && currentDeployId !== deployId;
+                        let idLog = `<span class="version-text">[${deployId}]</span>`;
+                        if (switched) {
+                            idLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentDeployId} ➔ ${deployId}]</span>`;
                         }
-                        currentVersion = apiVersion;
+                        currentDeployId = deployId;
+                        recordLatency(latency, switched);
 
-                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] ✅ 성공 ${versionLog}\n`;
+                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] ✅ 성공 (${Math.round(latency)}ms) ${idLog}\n`;
                     } else {
                         failureCount++;
-                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">❌ 실패 (HTTP ${response.status})</span>\n`;
+                        recordLatency(latency, false);
+                        logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">❌ 실패 (HTTP ${response.status}, ${Math.round(latency)}ms)</span>\n`;
                     }
                 } catch (error) {
+                    const latency = performance.now() - t0;
                     failureCount++;
-                    logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">💥 에러 발생: ${error.message}</span>\n`;
+                    recordLatency(latency, false);
+                    logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">💥 에러 발생 (${Math.round(latency)}ms): ${error.message}</span>\n`;
                 }
 
                 progressArea.innerText = `${i} / ${totalRequests}`;

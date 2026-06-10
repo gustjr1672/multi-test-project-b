@@ -13,16 +13,74 @@
         .btn-blue { background-color: #007bff; }
         .btn-green { background-color: #28a745; }
         .btn-purple { background-color: #a728a3; }
+
+        /* 라이브 배지 */
+        #liveBadge {
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            margin: 0 auto 30px;
+            padding: 12px 22px;
+            border-radius: 999px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            font-size: 14px;
+            color: #333;
+        }
+        #liveBadge .dot {
+            width: 12px; height: 12px; border-radius: 50%;
+            background: #adb5bd; /* 기본 회색(미확인) */
+        }
+        #liveBadge.up .dot   { background: #28a745; box-shadow: 0 0 0 4px rgba(40,167,69,.2); }
+        #liveBadge.down .dot { background: #dc3545; box-shadow: 0 0 0 4px rgba(220,53,69,.2); }
+        #liveBadge .color-blue  { color: #007bff; font-weight: bold; }
+        #liveBadge .color-green { color: #28a745; font-weight: bold; }
+        #liveBadge code { background: #e9ecef; padding: 2px 6px; border-radius: 4px; }
     </style>
 </head>
 <body>
     <h1>Project-B API 테스트 대시보드</h1>
-    
+
+    <!-- ⭐ 라이브 상태 배지: /health 를 2초마다 폴링하여 현재 떠 있는 색상/이미지태그/기동시각을 표시 -->
+    <div id="liveBadge">
+        <span class="dot"></span>
+        <span id="liveText">상태 확인 중...</span>
+    </div>
+
     <div>
         <a href="/delayed" class="btn btn-blue"> 지연 버전</a>
         <a href="/quick" class="btn btn-green"> 즉시 버전</a>
         <a href="/loopQuick" class="btn btn-purple"> 반복호출 버전</a>
     </div>
+
+    <script>
+        const badge = document.getElementById('liveBadge');
+        const liveText = document.getElementById('liveText');
+
+        async function pollHealth() {
+            try {
+                const res = await fetch('/health', { cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const h = await res.json();
+
+                const colorClass = h.color === 'blue' ? 'color-blue'
+                                 : h.color === 'green' ? 'color-green' : '';
+                badge.className = 'up';
+                liveText.innerHTML =
+                    `🟢 LIVE · <span class="${colorClass}">${h.color}</span>` +
+                    ` · <code>${h.imageTag}</code>` +
+                    ` · git <code>${h.gitSha}</code>` +
+                    ` · uptime ${h.uptimeSeconds}s` +
+                    ` · host <code>${(h.host || '').slice(0, 12)}</code>`;
+            } catch (e) {
+                badge.className = 'down';
+                liveText.innerText = '🔴 응답 없음 (' + e.message + ')';
+            }
+        }
+
+        pollHealth();
+        setInterval(pollHealth, 2000);
+    </script>
 </body>
 </html>
 

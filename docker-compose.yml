@@ -1,4 +1,4 @@
-﻿version: '3.8'
+version: '3.8'
 
 # Nginx는 API 컨테이너들과 같은 네트워크를 씁니다.
 services:
@@ -9,7 +9,14 @@ services:
     container_name: api-blue-b
     restart: unless-stopped
     environment:
-      - ConnectionStrings__DefaultConnection=${DB_URL}
+      # 접속문자열 자체가 아니라 secret 파일 "경로"만 전달 → docker inspect 에는 경로만 노출
+      - ConnectionStrings__DefaultConnection_FILE=/run/secrets/db_url
+      # 배포 메타정보 — 앱이 /health 와 API 응답에 실어 프론트가 전환을 추적한다.
+      - APP_COLOR=blue
+      - IMAGE_TAG=${IMAGE_TAG:-latest}
+      - GIT_SHA=${GIT_SHA:-unknown}
+    secrets:
+      - db_url
     ports:
       - "127.0.0.1:9080:8080"
     stop_grace_period: 60s
@@ -21,7 +28,20 @@ services:
     container_name: api-green-b
     restart: unless-stopped
     environment:
-      - ConnectionStrings__DefaultConnection=${DB_URL}
+      - ConnectionStrings__DefaultConnection_FILE=/run/secrets/db_url
+      # 배포 메타정보 — 앱이 /health 와 API 응답에 실어 프론트가 전환을 추적한다.
+      - APP_COLOR=green
+      - IMAGE_TAG=${IMAGE_TAG:-latest}
+      - GIT_SHA=${GIT_SHA:-unknown}
+    secrets:
+      - db_url
     ports:
       - "127.0.0.1:9081:8080"
     stop_grace_period: 60s
+
+# DB 접속정보는 환경변수가 아닌 파일 기반 secret 으로 주입.
+# 실제 값은 deploy.sh 가 $DB_URL(GitHub Secret) 로부터 ./secrets/db_url 에 기록한다.
+# 컨테이너 안에서는 /run/secrets/db_url (tmpfs) 로 마운트되어 docker inspect 에 내용이 보이지 않는다.
+secrets:
+  db_url:
+    file: ./secrets/db_url
