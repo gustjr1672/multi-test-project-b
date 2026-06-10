@@ -29,6 +29,21 @@ builder.Services.AddScoped<IUserService, UserService>(); // 서비스 추가함!
 
 var app = builder.Build();
 
+// 모든 응답에 배포 식별 헤더를 실어준다.
+// API JSON 본문은 그대로 두고도(즉시 버전 응답 원복 유지) 프론트(연속호출 그래프)가
+// 이 헤더 변화로 blue/green 전환 순간을 감지할 수 있게 한다.
+// nginx 는 커스텀 X- 헤더를 기본적으로 그대로 통과시키므로 게이트웨이 너머에서도 읽힌다.
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["X-Deploy-Id"] = DeploymentInfo.DeployId;
+        context.Response.Headers["X-Deploy-Color"] = DeploymentInfo.Color;
+        return Task.CompletedTask;
+    });
+    await next();
+});
+
 // 헬스체크 엔드포인트 (/health).
 // deploy.sh 는 HTTP 200 여부만 보지만, 본문에 배포 메타정보(JSON)를 함께 실어
 // 프론트(Index 라이브 배지)가 어느 색상/이미지태그/기동시각이 떠 있는지 폴링할 수 있게 한다.

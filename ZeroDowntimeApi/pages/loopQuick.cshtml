@@ -212,6 +212,11 @@
             <div class="latency-stat"><div>최근</div><div class="lat-num" id="latLast">- ms</div></div>
         </div>
         <canvas id="latChart" height="80"></canvas>
+        <div style="margin-top: 8px; font-size: 12px; color: #666;">
+            <span style="color:#007bff;">▬</span> 응답시간(ms)
+            &nbsp;&nbsp;
+            <span style="color:#28a745;">▼┊</span> 서버 전환 지점 (blue ↔ green)
+        </div>
     </div>
 
     <div class="log-header">
@@ -277,16 +282,26 @@
             const stepX = w / Math.max(latWindow.length - 1, 1);
             const pad = 6;
 
-            // 스위칭 발생 지점 세로선(초록)
-            ctx.strokeStyle = '#28a745';
-            ctx.lineWidth = 1;
+            // ⭐ 스위칭(서버 전환) 발생 지점: 초록 점선 세로선 + 상단 ▼ 마커
             switchMarks.forEach(idx => {
                 if (idx < 0 || idx >= latWindow.length) return;
                 const x = idx * stepX;
+                ctx.strokeStyle = '#28a745';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 3]);
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
                 ctx.lineTo(x, h);
                 ctx.stroke();
+                ctx.setLineDash([]);
+                // 상단 삼각형 마커
+                ctx.fillStyle = '#28a745';
+                ctx.beginPath();
+                ctx.moveTo(x - 4, 0);
+                ctx.lineTo(x + 4, 0);
+                ctx.lineTo(x, 7);
+                ctx.closePath();
+                ctx.fill();
             });
 
             // 지연시간 선그래프
@@ -355,15 +370,15 @@
 
                 const t0 = performance.now();
                 try {
-                    const response = await fetch(`/api/User/quick/${id}`);
+                    // no-store: 매 호출이 캐시 없이 실제 live 컨테이너에 도달하도록 (전환 감지 정확도)
+                    const response = await fetch(`/api/User/quick/${id}`, { cache: 'no-store' });
                     const latency = performance.now() - t0;
 
                     if (response.ok) {
-                        const data = await response.json();
-                        // 배포 식별자(color@imageTag). 구버전 응답 호환 위해 version 으로 폴백.
-                        const deployId = data.deployId || data.DeployId
-                            || data.version || data.Version || "정보 없음";
-                        const color = data.color || data.Color || "";
+                        // 배포 식별자는 응답 본문이 아니라 서버가 실어주는 헤더(X-Deploy-Id)에서 읽는다.
+                        // → 이 요청을 실제로 처리한 컨테이너가 무엇인지(=전환 발생 여부)를 정확히 추적.
+                        const deployId = response.headers.get('X-Deploy-Id') || '정보 없음';
+                        const color = response.headers.get('X-Deploy-Color') || '';
 
                         successCount++;
 
