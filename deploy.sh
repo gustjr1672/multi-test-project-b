@@ -47,6 +47,23 @@ export IMAGE_TAG="v$(date +%s)"
 export GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 # --------------------------------------------------
+# 1-1. DB 접속정보를 secret 파일로 기록 (docker inspect 평문 노출 방지)
+#  - $DB_URL 은 GitHub Secret 에서 워크플로 env 로 주입됨
+#  - docker-compose.yml 의 secrets.db_url.file(./secrets/db_url)이 이 파일을 가리킨다.
+#    이 파일이 없으면 'multi-test-project-b_db_url does not exist' 로 compose 가 실패함.
+#  - 환경변수 대신 파일로 넘겨 컨테이너 내부 tmpfs(/run/secrets)에만 존재하게 함
+# --------------------------------------------------
+SECRET_DIR="./secrets"
+mkdir -p "$SECRET_DIR"
+chmod 700 "$SECRET_DIR"
+# 줄바꿈 없이 값만 기록 (printf). DB_URL 미설정(로컬 등)이어도 set -u 에 걸리지 않게 ${DB_URL:-}.
+printf '%s' "${DB_URL:-}" > "$SECRET_DIR/db_url"
+chmod 600 "$SECRET_DIR/db_url"
+if [ ! -s "$SECRET_DIR/db_url" ]; then
+    echo "⚠️  경고: DB_URL 이 비어 있어 secrets/db_url 이 빈 파일입니다. (CI 라면 secrets.DB_URL 주입 여부 확인)"
+fi
+
+# --------------------------------------------------
 # 2. 새로운 타겟 빌드 및 실행
 #    (set -e 로 빌드 실패 시 여기서 즉시 중단)
 # --------------------------------------------------
