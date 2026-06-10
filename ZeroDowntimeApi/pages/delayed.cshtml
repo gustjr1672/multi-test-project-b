@@ -47,6 +47,23 @@
             color: #d63384;
             margin-bottom: 15px;
         }
+        /* ⭐ 실패 원인 진단 패널 */
+        #diagnosisArea {
+            display: none;
+            margin-bottom: 15px;
+            padding: 14px 16px;
+            border-radius: 6px;
+            border-left: 6px solid #adb5bd;
+            background: #f8f9fa;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        #diagnosisArea.ok    { border-left-color: #28a745; background: #eaf7ee; }
+        #diagnosisArea.warn  { border-left-color: #f0ad4e; background: #fcf6e9; }
+        #diagnosisArea.error { border-left-color: #dc3545; background: #fbeaec; }
+        #diagnosisArea .verdict { font-weight: bold; font-size: 15px; }
+        #diagnosisArea ul { margin: 8px 0 0; padding-left: 20px; }
+        #diagnosisArea code { background: #e9ecef; padding: 1px 5px; border-radius: 3px; }
     </style>
 </head>
 <body>
@@ -68,6 +85,9 @@
     <!-- ⭐️ 경과 시간을 보여줄 영역 -->
     <div id="timerDisplay">경과 시간: 0초</div>
 
+    <!-- ⭐ 실패 시 원인 진단(nginx / docker / 우아한 종료)을 표시 -->
+    <div id="diagnosisArea"></div>
+
     <h3>응답 결과:</h3>
     <pre id="resultArea">대기 중...</pre>
 
@@ -75,44 +95,123 @@
         // 타이머를 제어할 전역 변수 선언
         let timerInterval;
 
+        // 진단 패널에 결과를 그린다. level: ok | warn | error
+        function showDiagnosis(level, verdict, lines) {
+            const area = document.getElementById('diagnosisArea');
+            area.className = level;
+            area.style.display = 'block';
+            area.innerHTML =
+                `<div class="verdict">${verdict}</div>` +
+                (lines && lines.length ? `<ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul>` : '');
+        }
+
+        // 실패 직후 nginx 가 살아있는지 /health 로 즉석 확인(프로브).
+        // 200 → nginx 정상(문제는 백엔드/특정요청). 실패 → nginx 게이트웨이까지 도달 불가.
+        async function probeHealth() {
+            try {
+                const ctrl = new AbortController();
+                const t = setTimeout(() => ctrl.abort(), 3000);
+                const res = await fetch('/health', { cache: 'no-store', signal: ctrl.signal });
+                clearTimeout(t);
+                if (res.ok) {
+                    let info = '';
+                    try { const h = await res.json(); info = ` (live=${h.color}@@${h.imageTag}, uptime ${h.uptimeSeconds}s)`; } catch (_) {}
+                    return { alive: true, info };
+                }
+                return { alive: false, info: ` (HTTP ${res.status})` };
+            } catch (_) {
+                return { alive: false, info: '' };
+            }
+        }
+
         async function fetchData() {
             const id = document.getElementById('userId').value;
-            const delay = document.getElementById('delaySeconds').value;
+            const delay = parseInt(document.getElementById('delaySeconds').value, 10) || 0;
             const resultArea = document.getElementById('resultArea');
             const timerDisplay = document.getElementById('timerDisplay');
+            const diagnosisArea = document.getElementById('diagnosisArea');
 
             // 1. 초기화
             let elapsedSeconds = 0;
-            if (timerInterval) clearInterval(timerInterval); // 기존 타이머가 돌고 있다면 초기화
+            if (timerInterval) clearInterval(timerInterval);
             timerDisplay.innerText = `경과 시간: 0초`;
             resultArea.style.color = "black";
             resultArea.innerHTML = `<span class="loading">요청 중... ${delay}초를 기다리는 중</span>`;
+            diagnosisArea.style.display = 'none';
 
-            // 2. 1초마다 초시계 증가 로직 실행
+            // 2. 1초마다 초시계 증가
             timerInterval = setInterval(() => {
                 elapsedSeconds++;
                 timerDisplay.innerText = `경과 시간: ${elapsedSeconds}초`;
-            }, 1000); // 1000ms = 1초
+            }, 1000);
+
+            // 클라이언트 타임아웃: 지연시간 + 여유 20초. "서버가 끊은 것"과 "내가 기다리다 끊은 것"을 구분하기 위함.
+            const ctrl = new AbortController();
+            const clientTimeoutMs = (delay + 20) * 1000;
+            const clientTimer = setTimeout(() => ctrl.abort(), clientTimeoutMs);
 
             try {
-                // API 호출 (URL 파라미터 전달)
-                const response = await fetch(`/api/User/${id}?delay=${delay}`);
+                const response = await fetch(`/api/User/${id}?delay=${delay}`, { signal: ctrl.signal });
+                const server = response.headers.get('Server') || '(헤더 없음/숨김)';
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    resultArea.style.color = "black";
+                    resultArea.innerText = JSON.stringify(data, null, 2);
+                    timerDisplay.innerText += ` (정상 완료)`;
+                    // 어느 컨테이너가 끝까지 응답했는지(=드레인 성공 증거) 함께 표시
+                    const who = data.deployId ? `${data.deployId} / host ${(data.host || '').slice(0, 12)}` : '응답 정상';
+                    showDiagnosis('ok', '✅ 무중단 성공 — 요청이 끝까지 처리됨', [
+                        `처리한 컨테이너: <code>${who}</code>`,
+                        `이 요청이 살아남았다면, 배포 중이었더라도 구버전 컨테이너가 <code>stop_grace_period</code> 동안 정상 드레인된 것입니다.`
+                    ]);
+                } else {
+                    // nginx 까지는 도달해서 응답을 받았다 → status 로 백엔드 문제를 분류
+                    const map = {
+                        502: ['error', '🔌 502 Bad Gateway — Nginx는 살아있으나 백엔드(docker 컨테이너) 연결 실패',
+                              'upstream 컨테이너가 죽었거나 연결을 거부했습니다. 배포 중이라면 <b>구버전이 너무 빨리 내려갔고 신버전은 아직 안 떴을</b> 가능성(전환 타이밍 문제).'],
+                        503: ['error', '🚫 503 Service Unavailable — 가용한 백엔드 없음',
+                              'upstream 전체가 down 이거나 과부하. nginx가 넘길 컨테이너가 없는 상태입니다.'],
+                        504: ['warn', '⏱️ 504 Gateway Timeout — Nginx가 백엔드 응답을 기다리다 타임아웃',
+                              `지연시간(${delay}s)이 nginx의 <code>proxy_read_timeout</code> 보다 길어서 끊겼을 가능성이 큽니다. 무중단과 무관한 nginx 설정 이슈일 수 있어요.`]
+                    };
+                    const m = map[response.status] || ['error', `❌ HTTP ${response.status}`, '예상치 못한 응답 코드입니다.'];
+                    resultArea.style.color = "red";
+                    resultArea.innerText = `HTTP ${response.status}\nServer: ${server}`;
+                    timerDisplay.innerText += ` (HTTP ${response.status})`;
+                    showDiagnosis(m[0], m[1], [m[2], `응답한 주체(Server 헤더): <code>${server}</code> → ${/nginx/i.test(server) ? 'Nginx가 만든 에러 페이지' : 'Nginx 외 주체'}`]);
                 }
-
-                const data = await response.json();
-                resultArea.innerText = JSON.stringify(data, null, 2);
-                timerDisplay.innerText += ` (정상 완료)`;
-
             } catch (error) {
-                resultArea.innerText = `에러 발생: 통신이 끊어졌거나 서버가 죽었습니다.\n${error}`;
                 resultArea.style.color = "red";
-                timerDisplay.innerText += ` (에러 발생)`;
+                timerDisplay.innerText += ` (에러)`;
 
+                if (error.name === 'AbortError') {
+                    // 내가(클라이언트가) 타임아웃으로 끊은 경우
+                    resultArea.innerText = `클라이언트 타임아웃: ${clientTimeoutMs / 1000}초 동안 응답이 없어 요청을 취소했습니다.`;
+                    showDiagnosis('warn', '⏱️ 클라이언트 타임아웃 (서버가 끊은 게 아님)', [
+                        `브라우저가 ${clientTimeoutMs / 1000}초를 기다린 뒤 스스로 취소했습니다. 서버/백엔드가 그만큼 오래 붙잡고 있었다는 뜻.`,
+                        `지연시간을 줄이거나, 서버 측 처리시간을 확인하세요.`
+                    ]);
+                } else {
+                    // TypeError: Failed to fetch — 연결이 거부/리셋되었거나 nginx 자체가 응답 안 함.
+                    // 브라우저는 저수준 원인(ECONNREFUSED/ECONNRESET 등)을 JS에 노출하지 않으므로 /health 프로브로 추론.
+                    resultArea.innerText = `연결 실패: 응답을 받지 못했습니다.\n${error}`;
+                    const probe = await probeHealth();
+                    if (probe.alive) {
+                        showDiagnosis('error', '💥 연결이 처리 도중 끊김 — Nginx는 정상', [
+                            `실패 직후 <code>/health</code> 프로브는 성공${probe.info}. 즉 <b>Nginx 게이트웨이는 살아있습니다.</b>`,
+                            `이 지연 요청만 끊긴 것 → <b>요청을 처리하던 구버전 컨테이너가 드레인되지 못하고 강제 종료(SIGKILL)</b>됐을 가능성이 큽니다. = 우아한 종료 실패.`,
+                            `점검: <code>stop_grace_period(60s)</code> vs 앱 <code>ShutdownTimeout(65s)</code>, 그리고 실제 처리시간이 이보다 길지 않은지.`
+                        ]);
+                    } else {
+                        showDiagnosis('error', '🛑 Nginx 게이트웨이까지 도달 불가', [
+                            `실패 직후 <code>/health</code> 프로브도 실패${probe.info}. 즉 특정 요청이 아니라 <b>입구(Nginx) 자체가 응답하지 않습니다.</b>`,
+                            `원인 후보: master-nginx 컨테이너 다운, nginx reload 중 설정 오류, 또는 네트워크 단절. (docker 백엔드 단독 문제로 보기 어려움)`
+                        ]);
+                    }
+                }
             } finally {
-                // 3. 통신이 성공하든 실패하든 끝났으므로 타이머를 멈춥니다.
+                clearTimeout(clientTimer);
                 clearInterval(timerInterval);
             }
         }

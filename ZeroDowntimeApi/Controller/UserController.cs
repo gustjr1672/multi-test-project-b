@@ -41,11 +41,6 @@ public class UserController : ControllerBase
         return Ok(new
         {
             Version = "Project-B quick (Version-4)",
-            Color = DeploymentInfo.Color,
-            ImageTag = DeploymentInfo.ImageTag,
-            GitSha = DeploymentInfo.GitSha,
-            Host = DeploymentInfo.Host,
-            DeployId = DeploymentInfo.DeployId,
             Message = "성공",
             UserId = id,
             Data = result
