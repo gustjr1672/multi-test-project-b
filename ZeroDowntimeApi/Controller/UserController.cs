@@ -40,7 +40,7 @@ public class UserController : ControllerBase
 
         return Ok(new
         {
-            Version = "Project-B quick (Version-4)",
+            Version = "Project-B quick (Version-123)",
             Message = "성공",
             UserId = id,
             Data = result
