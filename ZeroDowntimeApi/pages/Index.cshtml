@@ -41,7 +41,7 @@
 <body>
     <h1>Project-B API 테스트 대시보드</h1>
 
-    <!-- ⭐ 라이브 상태 배지: /health 를 2초마다 폴링하여 현재 떠 있는 색상/이미지태그/기동시각을 표시 -->
+    <!-- ⭐ 라이브 상태 배지: /health 를 2초마다 폴링하여 서비스 생존 여부만 표시 (배포 메타정보는 보안상 비노출) -->
     <div id="liveBadge">
         <span class="dot"></span>
         <span id="liveText">상태 확인 중...</span>
@@ -61,17 +61,8 @@
             try {
                 const res = await fetch('/health', { cache: 'no-store' });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
-                const h = await res.json();
-
-                const colorClass = h.color === 'blue' ? 'color-blue'
-                                 : h.color === 'green' ? 'color-green' : '';
                 badge.className = 'up';
-                liveText.innerHTML =
-                    `🟢 LIVE · <span class="${colorClass}">${h.color}</span>` +
-                    ` · <code>${h.imageTag}</code>` +
-                    ` · git <code>${h.gitSha}</code>` +
-                    ` · uptime ${h.uptimeSeconds}s` +
-                    ` · host <code>${(h.host || '').slice(0, 12)}</code>`;
+                liveText.innerText = '🟢 LIVE';
             } catch (e) {
                 badge.className = 'down';
                 liveText.innerText = '🔴 응답 없음 (' + e.message + ')';

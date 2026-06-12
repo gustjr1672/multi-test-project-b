@@ -11,10 +11,6 @@ services:
     environment:
       # 접속문자열 자체가 아니라 secret 파일 "경로"만 전달 → docker inspect 에는 경로만 노출
       - ConnectionStrings__DefaultConnection_FILE=/run/secrets/db_url
-      # 배포 메타정보 — 앱이 /health 와 API 응답에 실어 프론트가 전환을 추적한다.
-      - APP_COLOR=blue
-      - IMAGE_TAG=${IMAGE_TAG:-latest}
-      - GIT_SHA=${GIT_SHA:-unknown}
     secrets:
       - db_url
     ports:
@@ -29,10 +25,6 @@ services:
     restart: unless-stopped
     environment:
       - ConnectionStrings__DefaultConnection_FILE=/run/secrets/db_url
-      # 배포 메타정보 — 앱이 /health 와 API 응답에 실어 프론트가 전환을 추적한다.
-      - APP_COLOR=green
-      - IMAGE_TAG=${IMAGE_TAG:-latest}
-      - GIT_SHA=${GIT_SHA:-unknown}
     secrets:
       - db_url
     ports:

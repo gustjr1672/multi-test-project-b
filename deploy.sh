@@ -43,8 +43,6 @@ echo "현재 버전=[$CURRENT_TARGET]"
 echo "🚀 배포 시작: Project B 새로운 버전($NEW_TARGET) 준비"
 
 export IMAGE_TAG="v$(date +%s)"
-# 짧은 git SHA 를 컨테이너 env(GIT_SHA)로 주입 → 앱이 /health·API 응답에 실어 화면에서 추적
-export GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 # --------------------------------------------------
 # 1-1. DB 접속정보를 secret 파일로 기록 (docker inspect 평문 노출 방지)

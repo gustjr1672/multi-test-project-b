@@ -107,18 +107,14 @@
 
         // 실패 직후 nginx 가 살아있는지 /health 로 즉석 확인(프로브).
         // 200 → nginx 정상(문제는 백엔드/특정요청). 실패 → nginx 게이트웨이까지 도달 불가.
+        // (/health 는 보안상 상태만 반환하므로 생존 여부만 판단한다)
         async function probeHealth() {
             try {
                 const ctrl = new AbortController();
                 const t = setTimeout(() => ctrl.abort(), 3000);
                 const res = await fetch('/health', { cache: 'no-store', signal: ctrl.signal });
                 clearTimeout(t);
-                if (res.ok) {
-                    let info = '';
-                    try { const h = await res.json(); info = ` (live=${h.color}@@${h.imageTag}, uptime ${h.uptimeSeconds}s)`; } catch (_) {}
-                    return { alive: true, info };
-                }
-                return { alive: false, info: ` (HTTP ${res.status})` };
+                return { alive: res.ok, info: res.ok ? '' : ` (HTTP ${res.status})` };
             } catch (_) {
                 return { alive: false, info: '' };
             }
@@ -159,10 +155,7 @@
                     resultArea.style.color = "black";
                     resultArea.innerText = JSON.stringify(data, null, 2);
                     timerDisplay.innerText += ` (정상 완료)`;
-                    // 어느 컨테이너가 끝까지 응답했는지(=드레인 성공 증거) 함께 표시
-                    const who = data.deployId ? `${data.deployId} / host ${(data.host || '').slice(0, 12)}` : '응답 정상';
                     showDiagnosis('ok', '✅ 무중단 성공 — 요청이 끝까지 처리됨', [
-                        `처리한 컨테이너: <code>${who}</code>`,
                         `이 요청이 살아남았다면, 배포 중이었더라도 구버전 컨테이너가 <code>stop_grace_period</code> 동안 정상 드레인된 것입니다.`
                     ]);
                 } else {

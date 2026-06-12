@@ -22,11 +22,6 @@ public class UserController : ControllerBase
         return Ok(new
         {
             Version = $"Project-B {delay}초 지연 버전)",
-            Color = DeploymentInfo.Color,
-            ImageTag = DeploymentInfo.ImageTag,
-            GitSha = DeploymentInfo.GitSha,
-            Host = DeploymentInfo.Host,
-            DeployId = DeploymentInfo.DeployId,
             Message = "성공",
             UserId = id,
             Data = result

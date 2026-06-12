@@ -177,7 +177,7 @@
 <body>
     <a href="/" class="nav-link">⬅️ 메인으로 돌아가기</a>
     <h2>⚡ 연속 API 무중단 배포 검증 테스트 (제어 센터)</h2>
-    <p>요청 횟수를 지정하여 호출을 제어하고, 배포 순간 버전이 교체되는 과정을 추적합니다.</p>
+    <p>요청 횟수를 지정하여 연속 호출하고, 배포 중에도 실패 없이(무중단) 처리되는지 성공/실패 수와 응답시간으로 확인합니다.</p>
 
     <div class="control-panel">
         <div>
@@ -220,13 +220,11 @@
         <canvas id="latChart" height="80"></canvas>
         <div style="margin-top: 8px; font-size: 12px; color: #666;">
             <span style="color:#007bff;">▬</span> 응답시간(ms)
-            &nbsp;&nbsp;
-            <span style="color:#28a745;">▼┊</span> 서버 전환 지점 (blue ↔ green)
         </div>
     </div>
 
     <div class="log-header">
-        <h3 style="margin: 0;">실시간 호출 로그 (버전 추적)</h3>
+        <h3 style="margin: 0;">실시간 호출 로그</h3>
         <button onclick="clearLog()" style="padding: 6px 12px; font-size: 13px; background-color: #6c757d;">🗑️ 로그 지우기</button>
     </div>
     <pre id="logArea">대기 중... 테스트 시작 버튼을 누르면 실시간 로그가 출력됩니다.</pre>
@@ -240,10 +238,9 @@
         let latSum = 0, latMin = Infinity, latMax = 0;
         const latWindow = [];          // 스파크라인에 그릴 최근 N개
         const LAT_WINDOW_SIZE = 120;
-        const switchMarks = [];        // 스위칭이 발생한 지점(스파크라인에 세로선 표시)
 
         function resetLatency() {
-            latencies.length = 0; latWindow.length = 0; switchMarks.length = 0;
+            latencies.length = 0; latWindow.length = 0;
             latSum = 0; latMin = Infinity; latMax = 0;
             document.getElementById('latMin').innerText = '- ms';
             document.getElementById('latAvg').innerText = '- ms';
@@ -252,7 +249,7 @@
             drawLatChart();
         }
 
-        function recordLatency(ms, switched) {
+        function recordLatency(ms) {
             latencies.push(ms);
             latSum += ms;
             if (ms < latMin) latMin = ms;
@@ -261,9 +258,7 @@
             latWindow.push(ms);
             if (latWindow.length > LAT_WINDOW_SIZE) {
                 latWindow.shift();
-                switchMarks.forEach((m, i) => switchMarks[i] = m - 1); // 윈도우 이동 보정
             }
-            if (switched) switchMarks.push(latWindow.length - 1);
 
             const avg = latSum / latencies.length;
             document.getElementById('latMin').innerText = Math.round(latMin) + ' ms';
@@ -287,28 +282,6 @@
             const max = Math.max(...latWindow, 1);
             const stepX = w / Math.max(latWindow.length - 1, 1);
             const pad = 6;
-
-            // ⭐ 스위칭(서버 전환) 발생 지점: 초록 점선 세로선 + 상단 ▼ 마커
-            switchMarks.forEach(idx => {
-                if (idx < 0 || idx >= latWindow.length) return;
-                const x = idx * stepX;
-                ctx.strokeStyle = '#28a745';
-                ctx.lineWidth = 1.5;
-                ctx.setLineDash([4, 3]);
-                ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, h);
-                ctx.stroke();
-                ctx.setLineDash([]);
-                // 상단 삼각형 마커
-                ctx.fillStyle = '#28a745';
-                ctx.beginPath();
-                ctx.moveTo(x - 4, 0);
-                ctx.lineTo(x + 4, 0);
-                ctx.lineTo(x, 7);
-                ctx.closePath();
-                ctx.fill();
-            });
 
             // 지연시간 선그래프
             ctx.strokeStyle = '#007bff';
@@ -356,7 +329,6 @@
 
             let successCount = 0;
             let failureCount = 0;
-            let currentDeployId = null;   // color@imageTag — 이 값이 바뀌면 실제 배포 전환
 
             resetLatency();
             progressArea.innerText = `0 / ${totalRequests}`;
@@ -381,12 +353,8 @@
                     const latency = performance.now() - t0;
 
                     if (response.ok) {
-                        // 배포 식별자는 응답 본문이 아니라 서버가 실어주는 헤더(X-Deploy-Id)에서 읽는다.
-                        // → 이 요청을 실제로 처리한 컨테이너가 무엇인지(=전환 발생 여부)를 정확히 추적.
-                        const deployId = response.headers.get('X-Deploy-Id') || '정보 없음';
-                        const color = response.headers.get('X-Deploy-Color') || '';
-
-                        // ⭐ 컨트롤러가 본문에 실어주는 Version 도 함께 읽어 표시 (헤더의 color@tag 와 별개)
+                        // 컨트롤러가 본문에 실어주는 Version 라벨만 표시.
+                        // (color@tag·deployId 등 배포 메타와 헤더 기반 스위칭 추적은 보안상 제거됨)
                         let version = '';
                         try {
                             const body = await response.json();
@@ -394,29 +362,19 @@
                         } catch (_) { /* 본문 파싱 실패는 무시 */ }
 
                         successCount++;
+                        recordLatency(latency);
 
-                        const switched = currentDeployId !== null && currentDeployId !== deployId;
-                        let idLog = `<span class="version-text">[${deployId}]</span>`;
-                        if (switched) {
-                            idLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentDeployId} ➔ ${deployId}]</span>`;
-                        }
-                        // ⭐ deployId(color@tag) 옆에 컨트롤러 Version 을 덧붙인다
-                        if (version) {
-                            idLog += ` <span class="ctrl-version">{${version}}</span>`;
-                        }
-                        currentDeployId = deployId;
-                        recordLatency(latency, switched);
-
+                        const idLog = version ? `<span class="ctrl-version">{${version}}</span>` : '';
                         logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] ✅ 성공 (${Math.round(latency)}ms) ${idLog}\n`;
                     } else {
                         failureCount++;
-                        recordLatency(latency, false);
+                        recordLatency(latency);
                         logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">❌ 실패 (HTTP ${response.status}, ${Math.round(latency)}ms)</span>\n`;
                     }
                 } catch (error) {
                     const latency = performance.now() - t0;
                     failureCount++;
-                    recordLatency(latency, false);
+                    recordLatency(latency);
                     logArea.innerHTML += `[${timestamp}] [#${String(i).padStart(3, '0')}] <span style="color: #ff5555;">💥 에러 발생 (${Math.round(latency)}ms): ${error.message}</span>\n`;
                 }
 
