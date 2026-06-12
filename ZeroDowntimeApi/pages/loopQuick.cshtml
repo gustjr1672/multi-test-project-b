@@ -133,6 +133,12 @@
             font-weight: bold;
         }
 
+        /* 컨트롤러 본문이 실어주는 Version 값 표시용 */
+        .ctrl-version {
+            color: #9b59b6;
+            font-weight: bold;
+        }
+
         /* 지연시간 패널 */
         .latency-panel {
             margin-top: 25px;
@@ -380,12 +386,23 @@
                         const deployId = response.headers.get('X-Deploy-Id') || '정보 없음';
                         const color = response.headers.get('X-Deploy-Color') || '';
 
+                        // ⭐ 컨트롤러가 본문에 실어주는 Version 도 함께 읽어 표시 (헤더의 color@tag 와 별개)
+                        let version = '';
+                        try {
+                            const body = await response.json();
+                            version = body.version || body.Version || '';
+                        } catch (_) { /* 본문 파싱 실패는 무시 */ }
+
                         successCount++;
 
                         const switched = currentDeployId !== null && currentDeployId !== deployId;
                         let idLog = `<span class="version-text">[${deployId}]</span>`;
                         if (switched) {
                             idLog = `<span style="color: #00ff00; font-weight: bold; font-size: 15px;">🔄 스위칭 감지! [${currentDeployId} ➔ ${deployId}]</span>`;
+                        }
+                        // ⭐ deployId(color@tag) 옆에 컨트롤러 Version 을 덧붙인다
+                        if (version) {
+                            idLog += ` <span class="ctrl-version">{${version}}</span>`;
                         }
                         currentDeployId = deployId;
                         recordLatency(latency, switched);
