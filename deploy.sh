@@ -139,8 +139,18 @@ docker compose stop "$CURRENT_TARGET"
 echo "✅ $CURRENT_TARGET 종료 완료!"
 
 # --------------------------------------------------
-# 6. 정리: 오래된 dangling 이미지 제거 (디스크 누적 방지)
+# 6. 정리: 최신 N개만 남기고 옛 zero-api-b 이미지 제거 (디스크 누적 방지)
+#  - 배포마다 IMAGE_TAG=v$(date +%s) 로 고유 태그가 붙어 prune -f(dangling 전용)로는
+#    안 지워지고 무한정 쌓인다. → keep-last-N 으로 상한을 둔다.
+#  - 사용 중(실행/직전 색) 이미지는 docker rmi 가 스스로 거부하므로 안전하게 건너뜀.
+#  - 최소 현재+직전 버전은 남겨 '사후 롤백' 여유분을 확보 (자세한 근거: 쌓이는 도커이미지 제거 전략.md)
 # --------------------------------------------------
+KEEP="${IMAGE_KEEP:-3}"
+# docker images 는 기본적으로 최신순 정렬 → 앞 KEEP개를 건너뛴 나머지가 삭제 대상
+docker images 'zero-api-b' --format '{{.ID}} {{.Repository}}:{{.Tag}}' \
+    | awk -v k="$KEEP" 'NR>k {print $1}' \
+    | xargs -r -n1 docker rmi 2>/dev/null || true
+# 그래도 남는 dangling(<none>) 은 마저 정리
 docker image prune -f >/dev/null 2>&1 || true
 
 echo "🎉 Project B 무중단 배포 완료! (live=$NEW_TARGET:$NEW_PORT, image=$IMAGE_TAG)"
